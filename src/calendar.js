@@ -8,9 +8,115 @@
 *
 */
 
-angular.module('ui.calendar', [])
-  .constant('uiCalendarConfig', {})
-  .directive('uiCalendar', ['uiCalendarConfig', '$parse', function(uiCalendarConfig) {
+angular.module('ui.calendar', []);
+angular.module('ui.calendar').constant('uiCalendarConfig', {});
+angular.module('ui.calendar').factory('changeWatcher', [ function(){
+
+  // Track changes in array by assigning id tokens to each element and watching the scope for changes in those tokens
+  // arguments:
+  //  arraySource array of function that returns array of objects to watch
+  //  tokenFn function(object) that returns the token for a given object
+  var changeWatcher = function(arraySource, tokenFn) {
+    var self;
+    var getTokens = function() {
+      var array = angular.isFunction(arraySource) ? arraySource() : arraySource;
+      return array.map(function(el) {
+        var token = tokenFn(el);
+        map[token] = el;
+        return token;
+      });
+    };
+    // returns elements in that are in a but not in b
+    // subtractAsSets([4, 5, 6], [4, 5, 7]) => [6]
+    var subtractAsSets = function(a, b) {
+      var result = [], inB = {}, i, n;
+      for (i = 0, n = b.length; i < n; i++) {
+        inB[b[i]] = true;
+      }
+      for (i = 0, n = a.length; i < n; i++) {
+        if (!inB[a[i]]) {
+          result.push(a[i]);
+        }
+      }
+      return result;
+    };
+
+    // Map objects to tokens and vice-versa
+    var map = {};
+
+    var applyChanges = function(newTokens, oldTokens) {
+      var i, n, el, token;
+      var replacedTokens = {};
+      var removedTokens = subtractAsSets(oldTokens, newTokens);
+      for (i = 0, n = removedTokens.length; i < n; i++) {
+        var removedToken = removedTokens[i];
+        el = map[removedToken];
+        var newToken = tokenFn(el);
+        // if the element wasn't removed but simply got a new token, its old token will be different from the current one
+        if (newToken === removedToken) {
+          delete map[removedToken];
+          self.onRemoved(el);
+        } else {
+          // if the element has been changed, its newToken token should be in the newTokens array, map it for later check
+          replacedTokens[newToken] = removedToken;
+        }
+      }
+
+      var addedTokens = subtractAsSets(newTokens, oldTokens);
+      for (i = 0, n = addedTokens.length; i < n; i++) {
+        token = addedTokens[i];
+        el = map[token];
+        if (!replacedTokens[token]) {
+          self.onAdded(el);
+        } else {
+          // The element has been replaced.
+          delete map[replacedTokens[token]]; // Delete the old token in the map
+          delete replacedTokens[token];      // Delete it also from the replacedTokens map to know it was a successful update.
+          self.onChanged(el);
+        }
+      }
+
+      // These tokens should have been in the newTokens array, but they weren't.
+      // They correspond to removed elements. Let's clean the map.
+      for (var unmatchedToken in replacedTokens){
+        el = map[replacedTokens[unmatchedToken]];
+        delete map[replacedTokens[unmatchedToken]];
+        self.onRemoved(el);
+      }
+
+    };
+    return self = {
+      subscribe: function(scope, onChanged) {
+        scope.$watch(getTokens, function(newTokens, oldTokens) {
+          if (!onChanged || onChanged(newTokens, oldTokens) !== false) {
+            applyChanges(newTokens, oldTokens);
+          }
+        }, true);
+      },
+      onAdded: angular.noop,
+      onChanged: angular.noop,
+      onRemoved: angular.noop
+    };
+  };
+
+
+  var watchersMap = {};
+  var register = function(name, sources, tokenFn){
+    return watchersMap[name] = changeWatcher(sources, tokenFn);
+  }
+  var getWatcher = function(name){
+    return watchersMap[name];
+  }
+  var ChangeWatcherService = {
+    watchers: watchersMap,
+    register: register,
+    g: getWatcher,
+    getWatcher: getWatcher
+  }
+
+  return ChangeWatcherService;
+}]);
+angular.module('ui.calendar').directive('uiCalendar', ['uiCalendarConfig', 'changeWatcher', '$parse', function(uiCalendarConfig, changeWatcher) {
   uiCalendarConfig = uiCalendarConfig || {};
   var sourceSerialId = 1, eventSerialId = 1;
   //returns calendar
@@ -35,98 +141,11 @@ angular.module('ui.calendar', [])
       };
       scope.init();
 
-      // Track changes in array by assigning id tokens to each element and watching the scope for changes in those tokens
-      // arguments:
-      //  arraySource array of function that returns array of objects to watch
-      //  tokenFn function(object) that returns the token for a given object
-      var changeWatcher = function(arraySource, tokenFn) {
-        var self;
-        var getTokens = function() {
-          var array = angular.isFunction(arraySource) ? arraySource() : arraySource;
-          return array.map(function(el) {
-            var token = tokenFn(el);
-            map[token] = el;
-            return token;
-          });
-        };
-        // returns elements in that are in a but not in b
-        // subtractAsSets([4, 5, 6], [4, 5, 7]) => [6]
-        var subtractAsSets = function(a, b) {
-          var result = [], inB = {}, i, n;
-          for (i = 0, n = b.length; i < n; i++) {
-            inB[b[i]] = true;
-          }
-          for (i = 0, n = a.length; i < n; i++) {
-            if (!inB[a[i]]) {
-              result.push(a[i]);
-            }
-          }
-          return result;
-        };
-
-        // Map objects to tokens and vice-versa
-        var map = {};
-
-        var applyChanges = function(newTokens, oldTokens) {
-          var i, n, el, token;
-          var replacedTokens = {};
-          var removedTokens = subtractAsSets(oldTokens, newTokens);
-          for (i = 0, n = removedTokens.length; i < n; i++) {
-            var removedToken = removedTokens[i];
-            el = map[removedToken];
-            var newToken = tokenFn(el);
-            // if the element wasn't removed but simply got a new token, its old token will be different from the current one
-            if (newToken === removedToken) {
-              delete map[removedToken];
-              self.onRemoved(el);
-            } else {
-            // if the element has been changed, its newToken token should be in the newTokens array, map it for later check
-              replacedTokens[newToken] = removedToken;
-            }
-          }
-
-          var addedTokens = subtractAsSets(newTokens, oldTokens);
-          for (i = 0, n = addedTokens.length; i < n; i++) {
-            token = addedTokens[i];
-            el = map[token];
-            if (!replacedTokens[token]) {
-              self.onAdded(el);
-            } else {
-              // The element has been replaced.
-              delete map[replacedTokens[token]]; // Delete the old token in the map
-              delete replacedTokens[token];      // Delete it also from the replacedTokens map to know it was a successful update.
-              self.onChanged(el);
-            }
-          }
-
-          // These tokens should have been in the newTokens array, but they weren't.
-          // They correspond to removed elements. Let's clean the map.
-          for (var unmatchedToken in replacedTokens){
-            el = map[replacedTokens[unmatchedToken]];
-            delete map[replacedTokens[unmatchedToken]];
-            self.onRemoved(el);
-          }
-
-        };
-        return self = {
-          subscribe: function(scope, onChanged) {
-            scope.$watch(getTokens, function(newTokens, oldTokens) {
-              if (!onChanged || onChanged(newTokens, oldTokens) !== false) {
-                applyChanges(newTokens, oldTokens);
-              }
-            }, true);
-          },
-          onAdded: angular.noop,
-          onChanged: angular.noop,
-          onRemoved: angular.noop
-        };
-      };
-
       //= tracking sources added/removed
 
       var sourcesChanged = false;
 
-      var eventSourcesWatcher = changeWatcher(sources, function(source) {
+      var eventSourcesWatcher = changeWatcher.register('eventSources', sources, function(source) {
         return source.__id || (source.__id = sourceSerialId++);
       });
       eventSourcesWatcher.subscribe(scope);
@@ -151,7 +170,7 @@ angular.module('ui.calendar', [])
         }
         return Array.prototype.concat.apply([], arraySources);
       };
-      var eventsWatcher = changeWatcher(allEvents, function(e) {
+      var eventsWatcher = changeWatcher.register('events', allEvents, function(e) {
         if (!e.__uiCalId) {
           e.__uiCalId = eventSerialId++;
         }
